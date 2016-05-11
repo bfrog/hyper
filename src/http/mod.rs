@@ -284,7 +284,7 @@ enum Reg {
 }
 
 /// A notifier to wakeup a socket after having used `Next::wait()`
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Control {
     tx: self::channel::Sender<Next>,
 }
