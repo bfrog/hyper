@@ -4,7 +4,7 @@
 //! them off to a `Handler`.
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -29,6 +29,7 @@ pub struct Server<T: Accept> {
     keep_alive: bool,
     idle_timeout: Duration,
     max_sockets: usize,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl<T> Server<T> where T: Accept, T::Output: Transport {
@@ -40,6 +41,7 @@ impl<T> Server<T> where T: Accept, T::Output: Transport {
             keep_alive: true,
             idle_timeout: Duration::from_secs(10),
             max_sockets: 4096,
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -96,17 +98,13 @@ impl<A: Accept + 'static> Server<A> where A::Output: Transport  {
     /// Binds to a socket and starts handling connections.
     pub fn handle<H>(self, factory: H)
     where H: HandlerFactory<A::Output> {
-        let addr = try!(self.listener.local_addr());
-        let (notifier_tx, notifier_rx) = mpsc::channel();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let shutdown_rx = shutdown.clone();
+        let shutdown_rx = self.shutdown.clone();
         let mut config = rotor::Config::new();
         config.slab_capacity(self.max_sockets);
         config.mio().notify_capacity(self.max_sockets);
         let keep_alive = self.keep_alive;
         let mut loop_ = rotor::Loop::new(&config).unwrap();
         loop_.add_machine_with(move |scope| {
-            rotor_try!(notifier_tx.send(scope.notifier()));
             rotor_try!(scope.register(&self.listener, EventSet::readable(), PollOpt::level()));
             rotor::Response::ok(ServerFsm::Listener::<A, H>(self.listener, shutdown_rx))
         }).unwrap();
@@ -255,14 +253,6 @@ impl fmt::Debug for Listening {
         f.debug_struct("Listening")
             .field("addr", &self.addr)
             .finish()
-    }
-}
-
-impl Drop for Listening {
-    fn drop(&mut self) {
-        self.handle.take().map(|handle| {
-            handle.join().unwrap();
-        });
     }
 }
 
