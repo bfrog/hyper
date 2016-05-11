@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use std::thread;
 
 use rotor::mio::{EventSet, PollOpt};
 use rotor::{self, Scope};
@@ -93,38 +92,28 @@ impl<S: Ssl> Server<HttpsListener<S>> {
 }
 
 
-impl<A: Accept + Send + 'static> Server<A> where A::Output: Transport  {
+impl<A: Accept + 'static> Server<A> where A::Output: Transport  {
     /// Binds to a socket and starts handling connections.
-    pub fn handle<H>(self, factory: H) -> ::Result<Listening>
+    pub fn handle<H>(self, factory: H)
     where H: HandlerFactory<A::Output> {
         let addr = try!(self.listener.local_addr());
         let (notifier_tx, notifier_rx) = mpsc::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_rx = shutdown.clone();
-        let handle = try!(thread::Builder::new().name("hyper-server".to_owned()).spawn(move || {
-            let mut config = rotor::Config::new();
-            config.slab_capacity(self.max_sockets);
-            config.mio().notify_capacity(self.max_sockets);
-            let keep_alive = self.keep_alive;
-            let mut loop_ = rotor::Loop::new(&config).unwrap();
-            loop_.add_machine_with(move |scope| {
-                rotor_try!(notifier_tx.send(scope.notifier()));
-                rotor_try!(scope.register(&self.listener, EventSet::readable(), PollOpt::level()));
-                rotor::Response::ok(ServerFsm::Listener::<A, H>(self.listener, shutdown_rx))
-            }).unwrap();
-            loop_.run(Context {
-                keep_alive: keep_alive,
-                factory: factory,
-            }).unwrap();
-        }));
-
-        let notifier = notifier_rx.recv().unwrap();
-
-        Ok(Listening {
-            addr: addr,
-            shutdown: (shutdown, notifier),
-            handle: Some(handle),
-        })
+        let mut config = rotor::Config::new();
+        config.slab_capacity(self.max_sockets);
+        config.mio().notify_capacity(self.max_sockets);
+        let keep_alive = self.keep_alive;
+        let mut loop_ = rotor::Loop::new(&config).unwrap();
+        loop_.add_machine_with(move |scope| {
+            rotor_try!(notifier_tx.send(scope.notifier()));
+            rotor_try!(scope.register(&self.listener, EventSet::readable(), PollOpt::level()));
+            rotor::Response::ok(ServerFsm::Listener::<A, H>(self.listener, shutdown_rx))
+        }).unwrap();
+        loop_.run(Context {
+            keep_alive: keep_alive,
+            factory: factory,
+        }).unwrap();
     }
 }
 
@@ -259,7 +248,6 @@ pub struct Listening {
     /// The address this server is listening on.
     pub addr: SocketAddr,
     shutdown: (Arc<AtomicBool>, rotor::Notifier),
-    handle: Option<::std::thread::JoinHandle<()>>,
 }
 
 impl fmt::Debug for Listening {
@@ -321,7 +309,7 @@ pub trait Handler<T: Transport> {
 
 
 /// Used to create a `Handler` when a new message is received by the server.
-pub trait HandlerFactory<T: Transport>: Send + 'static {
+pub trait HandlerFactory<T: Transport>: 'static {
     /// The `Handler` to use for the incoming message.
     type Output: Handler<T>;
     /// Creates the associated `Handler`.
@@ -329,7 +317,7 @@ pub trait HandlerFactory<T: Transport>: Send + 'static {
 }
 
 impl<F, H, T> HandlerFactory<T> for F
-where F: FnMut(http::Control) -> H + Send + 'static, H: Handler<T>, T: Transport {
+where F: FnMut(http::Control) -> H + 'static, H: Handler<T>, T: Transport {
     type Output = H;
     fn create(&mut self, ctrl: http::Control) -> H {
         self(ctrl)
