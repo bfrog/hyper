@@ -31,7 +31,7 @@ impl<H: Handler<T>, T: Transport> http::MessageHandler<T> for Message<H, T> {
     fn on_incoming(&mut self, head: http::RequestHead) -> Next {
         trace!("on_incoming {:?}", head);
         let req = request::new(head);
-        self.handler.on_request(req)
+        self.handler.on_request(&req)
     }
 
     fn on_decode(&mut self, transport: &mut http::Decoder<T>) -> Next {
